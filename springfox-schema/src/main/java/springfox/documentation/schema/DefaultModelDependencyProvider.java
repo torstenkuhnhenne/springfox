@@ -19,6 +19,7 @@
 
 package springfox.documentation.schema;
 
+import java.util.Collections;
 import com.fasterxml.classmate.ResolvedType;
 import com.fasterxml.classmate.TypeResolver;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
@@ -33,11 +34,8 @@ import springfox.documentation.schema.property.ModelPropertiesProvider;
 import springfox.documentation.spi.schema.EnumTypeDeterminer;
 import springfox.documentation.spi.schema.contexts.ModelContext;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
@@ -56,6 +54,7 @@ public class DefaultModelDependencyProvider implements ModelDependencyProvider {
   private final TypeNameExtractor nameExtractor;
   private final EnumTypeDeterminer enumTypeDeterminer;
   private final SchemaPluginsManager schemaPluginsManager;
+  private final Map<ModelContext, List<ResolvedType>> resolvedTypesCache = new HashMap<>();
 
   @Autowired
   public DefaultModelDependencyProvider(
@@ -95,20 +94,24 @@ public class DefaultModelDependencyProvider implements ModelDependencyProvider {
   }
 
 
-  private List<ResolvedType> resolvedDependencies(ModelContext modelContext) {
-    ResolvedType resolvedType = modelContext.alternateFor(modelContext.resolvedType(typeResolver));
-    if (isBaseType(ModelContext.fromParent(modelContext, resolvedType))) {
-      LOG.debug("Marking base type {} as seen", resolvedType.getSignature());
-      modelContext.seen(resolvedType);
-      return new ArrayList<>();
-    }
-    List<ResolvedType> dependencies = new ArrayList<>(resolvedTypeParameters(modelContext, resolvedType));
-    dependencies.addAll(resolvedArrayElementType(modelContext, resolvedType));
-    dependencies.addAll(resolvedMapType(modelContext, resolvedType));
-    dependencies.addAll(resolvedSubclasses(modelContext, resolvedType));
-    dependencies.addAll(resolvedPropertiesAndFields(modelContext, resolvedType));
-    return dependencies;
+  private List<ResolvedType> resolvedDependencies(ModelContext ctx) {
+    return resolvedTypesCache.computeIfAbsent(ctx, modelContext -> {
+      final ResolvedType resolvedType = modelContext.alternateFor(modelContext.resolvedType(typeResolver));
+      if (DefaultModelDependencyProvider.this.isBaseType(ModelContext.fromParent(modelContext, resolvedType))) {
+        LOG.debug("Marking base type {} as seen", resolvedType.getSignature());
+        modelContext.seen(resolvedType);
+        return Collections.emptyList();
+      }
+
+      final List<ResolvedType> dependencies = new ArrayList(DefaultModelDependencyProvider.this.resolvedTypeParameters(modelContext, resolvedType));
+      dependencies.addAll(DefaultModelDependencyProvider.this.resolvedArrayElementType(modelContext, resolvedType));
+      dependencies.addAll(DefaultModelDependencyProvider.this.resolvedMapType(modelContext, resolvedType));
+      dependencies.addAll(DefaultModelDependencyProvider.this.resolvedPropertiesAndFields(modelContext, resolvedType));
+      dependencies.addAll(DefaultModelDependencyProvider.this.resolvedSubclasses(modelContext, resolvedType));
+      return dependencies;
+    });
   }
+
 
   private Collection<? extends ResolvedType> resolvedSubclasses(ModelContext modelContext, ResolvedType resolvedType) {
     JsonSubTypes subTypes = AnnotationUtils.findAnnotation(
